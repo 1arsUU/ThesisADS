@@ -1,0 +1,1166 @@
+---
+title: "Thesis data clean"
+output: html_document
+date: "2023-07-10"
+---
+
+#Load packages
+```{r, results='hide',warning=F}
+library("tidyverse")
+library("reshape2")
+library("tidyr")
+library("gridExtra")
+library("jsonlite")
+library("readxl")
+library("dplyr")
+library("lubridate")
+library("wesanderson")
+library("zoo")
+```
+
+
+#quotations_dataset
+```{r, results=F}
+# Read the Excel sheets into separate data frames, skipping the first two rows of "Projectdata"
+project_data <- read_excel('Begroting_Invulformulier_dummy.xlsm', sheet = 'Projectdata', skip = 2) %>% select(Projectnaam, 'M2 BVO totaal')
+
+financial_data <- read_excel('Begroting_Invulformulier_dummy.xlsm', sheet = 'Financiëledata', skip = 1) %>% select(Projectnaam, Maand, Jaar, 'B2.1 Prefab casco', 'B2.2 Constructiestaal')
+
+quotations_dataset <- inner_join(project_data, financial_data, by = "Projectnaam")
+
+quotations_dataset <- data.frame(apply(quotations_dataset, 2, function(x) gsub("€.", "", x)))
+
+quotations_dataset[] <- lapply(quotations_dataset, function(x) gsub("\\.", "", x))
+quotations_dataset[] <- lapply(quotations_dataset, function(x) gsub(",", ".", x))
+
+quotations_dataset$M2.BVO.totaal <- as.numeric(quotations_dataset$M2.BVO.totaal)
+quotations_dataset$B2.1.Prefab.casco <- as.numeric(quotations_dataset$B2.1.Prefab.casco)
+quotations_dataset$B2.2.Constructiestaal <- as.numeric(quotations_dataset$B2.2.Constructiestaal)
+
+# Replace NA values with 0 in B2.2.Constructiestaal
+quotations_dataset$B2.2.Constructiestaal[is.na(quotations_dataset$B2.2.Constructiestaal)] <- 0
+
+# Calculate prijs_B2_per_BVO
+quotations_dataset$prijs_B2_per_BVO <- (quotations_dataset$B2.1.Prefab.casco + quotations_dataset$B2.2.Constructiestaal) / quotations_dataset$M2.BVO.totaal
+
+# Load the 'lubridate' package
+library(lubridate)
+
+# Create a lookup table for Dutch month names to month numbers
+month_lookup <- c("januari" = "01", "februari" = "02", "maart" = "03", "april" = "04", "mei" = "05", "juni" = "06",
+                  "juli" = "07", "augustus" = "08", "september" = "09", "oktober" = "10", "november" = "11", "december" = "12")
+
+# Extract the year and month components
+quotations_dataset$Jaar <- as.character(quotations_dataset$Jaar)
+quotations_dataset$Maand <- tolower(quotations_dataset$Maand)
+
+# Create the Perioden column by combining year, month, and day
+quotations_dataset$Perioden <- paste0(quotations_dataset$Jaar, "-", month_lookup[quotations_dataset$Maand], "-01")
+
+# Convert Perioden column to Date type
+quotations_dataset$Perioden <- ymd(quotations_dataset$Perioden)
+
+write.csv(quotations_dataset, "quotations_dataset.csv", row.names=FALSE)
+```
+
+#cost_proportions_dataset
+```{r}
+file_path <- "Kosten_overzicht.xlsx"
+cost_proportions_dataset <- read_excel(file_path, sheet = 1)
+
+# Select the relevant columns for calculation
+selected_columns <- c("kolommen en vloeren", "gevels en wanden", "transport", "engineering", "montage", "staalconstructies", "totaal")
+
+# Subset the data frame to include only the selected columns
+selected_data <- cost_proportions_dataset[, selected_columns]
+
+# Calculate the sum of all proportions except "risico/winst en ak"
+sum_without_risico <- sum(selected_data[, -7], na.rm = TRUE)
+
+# Calculate the average percentage for each column compared to "totaal" (excluding "risico/winst en ak")
+percentage <- colSums(selected_data[, -7], na.rm = TRUE) / sum_without_risico * 100
+
+# Create a new data frame with column names and average percentages
+cost_proportions_dataset <- data.frame(Column = selected_columns[-7], Percentage = percentage)
+
+```
+#poured_concrete_dataset
+```{r}
+# poured_concrete_dataset <- data.frame(
+#   Componenten = "poured concrete",
+#   Perioden = as.Date(c("2018-01-01", "2019-01-01", "2020-01-01", "2021-01-01", "2022-01-01", "2023-01-01")),
+#   Prijs = c(85.50, 86.50, 90.50, 92.50, 100.00, 130.70)
+# )
+
+dates <- seq(as.Date('2017-07-01'), as.Date('2023-07-01'), by = 'month')
+
+# Create the 'Perioden' and 'Prijs' columns
+poured_concrete_dataset <- data.frame(
+  Componenten = "Giet_beton",
+  Perioden = dates,
+  Prijs = 0,
+  Bron = "poured_concrete_dataset"
+)
+
+# Create the 'Prijs' column and assign the corresponding values
+poured_concrete_dataset$Prijs <- 85.50
+poured_concrete_dataset$Prijs[poured_concrete_dataset$Perioden > as.Date('2018-07-01') &
+                              poured_concrete_dataset$Perioden <= as.Date('2019-07-01')] <- 86.50
+poured_concrete_dataset$Prijs[poured_concrete_dataset$Perioden > as.Date('2019-07-01') &
+                              poured_concrete_dataset$Perioden <= as.Date('2020-07-01')] <- 90.50
+poured_concrete_dataset$Prijs[poured_concrete_dataset$Perioden > as.Date('2020-07-01') &
+                              poured_concrete_dataset$Perioden <= as.Date('2021-07-01')] <- 92.50
+poured_concrete_dataset$Prijs[poured_concrete_dataset$Perioden > as.Date('2021-07-01') &
+                              poured_concrete_dataset$Perioden <= as.Date('2022-07-01')] <- 100.00
+poured_concrete_dataset$Prijs[poured_concrete_dataset$Perioden > as.Date('2022-07-01')] <- 130.70
+
+# Sort the DataFrame by ascending order of "Perioden" column
+poured_concrete_dataset <- poured_concrete_dataset[order(poured_concrete_dataset$Perioden), ]
+
+# Calculate the Index proportionally
+poured_concrete_dataset$Index <- 100 * (poured_concrete_dataset$Prijs / poured_concrete_dataset$Prijs[1])
+
+# Keep only the "Perioden", "Componenten", and "Index" columns
+poured_concrete_dataset <- poured_concrete_dataset[c("Perioden", "Componenten", "Prijs", "Index")]
+
+poured_concrete_dataset <- poured_concrete_dataset %>%
+  arrange(Perioden) %>%
+  mutate(Diff = Index - lag(Index))
+
+poured_concrete_dataset <- poured_concrete_dataset %>% filter(Perioden >= as.Date("2018-01-01"))
+
+write.csv(poured_concrete_dataset, file = "poured_concrete_dataset", row.names = FALSE)
+```
+#CBS_energy_dataset
+```{r}
+# Initialize an empty dataframe
+# CBS_energy_dataset <- data.frame()
+
+api_url <- "https://opendata.cbs.nl/ODataApi/odata/83131NED/TypedDataSet?$filter=Bestedingscategorieen%20eq%20%27CPI045000%27&$top=1000&$skip=0"
+api_response <- jsonlite::fromJSON(api_url)
+
+  # Convert the response to a data frame and filter it
+  CBS_energy_dataset <- as.data.frame(api_response$value)
+
+  # Select only necessary columns and rename "Bestedingscategorieen" to "Componenten" and "CPI_1" to "Index"
+  CBS_energy_dataset <- CBS_energy_dataset[c("Perioden", "CPI_1", "Bestedingscategorieen")]
+  colnames(CBS_energy_dataset)[colnames(CBS_energy_dataset) == "Bestedingscategorieen"] <- "Componenten"
+  colnames(CBS_energy_dataset)[colnames(CBS_energy_dataset) == "CPI_1"] <- "Index"
+
+  # Change the format of "Perioden" and remove undesired rows
+  CBS_energy_dataset$Perioden <- gsub("MM", "", CBS_energy_dataset$Perioden)
+  CBS_energy_dataset <- subset(CBS_energy_dataset, !grepl("ff|JJ", CBS_energy_dataset$Perioden))
+
+  # If the dataframe is not empty, continue with transformations
+  if (nrow(CBS_energy_dataset) > 0) {
+    # Add "01" to the end of "Perioden" values
+    CBS_energy_dataset$Perioden <- paste0(CBS_energy_dataset$Perioden, "01")
+
+    # Convert "Perioden" to Date
+    CBS_energy_dataset$Perioden <- as.Date(CBS_energy_dataset$Perioden, "%Y%m%d")
+
+    # Append the data
+    CBS_energy_dataset <- rbind(CBS_energy_dataset, CBS_energy_dataset)
+    
+
+# Keep records from 2018-01-01 onwards
+CBS_energy_dataset <- subset(CBS_energy_dataset, Perioden >= as.Date("2018-01-01"))
+
+# Find the CPI_1 value at 2018-01-01
+CPI_2018_01_01 <- CBS_energy_dataset$Index[CBS_energy_dataset$Perioden == as.Date("2018-01-01")]
+
+# Adjust all the Index values based on 2018-01-01 value
+CBS_energy_dataset$Index <- (CBS_energy_dataset$Index / CPI_2018_01_01) * 100
+
+CBS_energy_dataset$Componenten <- gsub('CPI045000', 'Energie', CBS_energy_dataset$Componenten)
+
+# Remove unnecessary columns
+CBS_energy_dataset <- CBS_energy_dataset[c("Perioden", "Componenten", "Index")]
+  }
+  
+CBS_energy_dataset <- CBS_energy_dataset %>%
+  arrange(Perioden) %>%
+  mutate(Diff = Index - lag(Index))
+
+# Remove rows with 'Diff' equal to 0
+CBS_energy_dataset <- CBS_energy_dataset[!(CBS_energy_dataset$Diff == 0.00000000 & !is.na(CBS_energy_dataset$Diff)), ]
+
+
+```
+
+#CBS construction costs
+```{r}
+# Make a GET request to the API
+api_url <- "https://opendata.cbs.nl/ODataApi/odata/83887NED/TypedDataSet"
+api_response <- jsonlite::fromJSON(api_url)
+
+# Extract the dataframe from the response
+CBS_bouwkosten <- as.data.frame(api_response$value)
+
+colnames(CBS_bouwkosten)[4] <- "Index"
+
+CBS_bouwkosten$Componenten <- gsub('T001363', 'Bouwkosten totaal', CBS_bouwkosten$Componenten)
+CBS_bouwkosten$Componenten <- gsub('A043942', 'Looncomponent', CBS_bouwkosten$Componenten)
+CBS_bouwkosten$Componenten <- gsub('A043943', 'Materiaalcomponent', CBS_bouwkosten$Componenten)
+
+# Turn date values into correct format
+CBS_bouwkosten$Perioden <- gsub("MM", "-", CBS_bouwkosten$Perioden)
+CBS_bouwkosten$Perioden <- gsub("JJ.*", "", CBS_bouwkosten$Perioden)
+
+# Subset the rows of annual figures to a separate df
+CBS_bouwkosten_jaar <- subset(CBS_bouwkosten, nchar(Perioden) == 4)
+
+# Remove annual figures from the original dataframe
+CBS_bouwkosten <- subset(CBS_bouwkosten, nchar(Perioden) != 4)
+
+CBS_bouwkosten$Perioden <- as.Date(paste(CBS_bouwkosten$Perioden, "-01", sep = ""), format = "%Y-%m-%d")
+
+# Filter for dates from 2018-01-01 and newer
+CBS_material_labour_dataset <- subset(CBS_bouwkosten, Perioden >= as.Date("2018-01-01"))
+
+# Adjust the index values proportionally based on January 1, 2018
+baseline_index <- CBS_material_labour_dataset$Index[CBS_material_labour_dataset$Perioden == as.Date("2018-01-01")]
+CBS_material_labour_dataset$Index <- 100 * CBS_material_labour_dataset$Index / baseline_index
+
+# Remove unnecessary columns
+CBS_material_labour_dataset <- CBS_material_labour_dataset[c("Perioden", "Componenten", "Index")]
+
+CBS_material_labour_dataset <- CBS_material_labour_dataset %>%
+  group_by(Componenten) %>%
+  arrange(Perioden) %>%
+  mutate(Diff = Index - lag(Index))
+
+# Remove the grouping
+CBS_material_labour_dataset <- ungroup(CBS_material_labour_dataset)
+
+# Remove unnecessary dataframes
+rm(CBS_bouwkosten, CBS_bouwkosten_jaar, baseline_index)
+``` 
+
+#BDB
+```{r}
+BDB <- read.csv("BDB.csv", sep=",", stringsAsFactors = FALSE)
+
+BDB$ï..Reference.date <- as.Date(paste0("01-", BDB$ï..Reference.date), format = "%d-%b-%y")
+BDB$ï..Reference.date<- format(BDB$ï..Reference.date, "%Y-%m-%d")
+
+# rename the column to 'Perioden'
+colnames(BDB)[colnames(BDB) == 'ï..Reference.date'] <- 'Perioden'
+
+# Filter for dates from 2018-01-01 and newer
+BDB <- BDB[BDB$Perioden >= as.Date("2018-01-01"), ]
+
+# Set baseline index value for January 1, 2018
+baseline_labor <- BDB$Total.labor..index.[BDB$Perioden == as.Date("2018-01-01")]
+baseline_material <- BDB$Total.material..index.[BDB$Perioden == as.Date("2018-01-01")]
+
+# Calculate the relative change in index values
+BDB$Total.labor..index. <- 100 * BDB$Total.labor..index. / baseline_labor
+BDB$Total.material..index. <- 100 * BDB$Total.material..index. / baseline_material
+
+```
+
+#Steel_prices_dataset
+```{r}
+xlsx_url <- "https://www.belmetal.be/site/files/files/IABSI.xlsx"
+
+response <- httr::GET(xlsx_url)
+
+filename <- "file.xlsx"
+writeBin(response$content, filename)
+
+year <- 2018
+belmetal_index <- 1
+
+while (TRUE) {
+  sheet_name <- as.character(year)
+  
+  belmetal <- tryCatch({
+    readxl::read_excel(filename, sheet = sheet_name, skip = 10)
+  }, error = function(e) {
+    NULL
+  })
+  
+  if (is.null(belmetal)) {
+    break
+  }
+  
+  belmetal <- belmetal[is.na(belmetal[, 2]), ]
+  
+  belmetal[, 1] <- seq(as.Date(paste(year, "-01-01", sep = "")), by = "1 month", length.out = nrow(belmetal))
+  
+  assign(paste0("belmetal", year), belmetal)
+  
+  year <- year + 1
+  belmetal_index <- belmetal_index + 1
+}
+
+# Rename columns to have consistent names across data frames
+colnames(belmetal2018) <- colnames(belmetal2023)
+colnames(belmetal2019) <- colnames(belmetal2023)
+colnames(belmetal2020) <- colnames(belmetal2023)
+colnames(belmetal2021) <- colnames(belmetal2023)
+colnames(belmetal2022) <- colnames(belmetal2023)
+
+steel_prices_dataset <- rbind(belmetal2018, belmetal2019, belmetal2020, belmetal2021, belmetal2022, belmetal2023)
+rm(belmetal2018, belmetal2019, belmetal2020, belmetal2021, belmetal2022, belmetal2023)
+
+# Change column name "semaine/week" to "Perioden"
+colnames(steel_prices_dataset)[1] <- "Perioden"
+
+# Calculate the pooled index values proportionally
+
+baseline_index_FKC <- steel_prices_dataset$FKC...4[steel_prices_dataset$Perioden == as.Date("2018-01-01")]
+baseline_index_TNM <- steel_prices_dataset$TNM...6[steel_prices_dataset$Perioden == as.Date("2018-01-01")]
+steel_prices_dataset$Index <- 100 * (0.5 * steel_prices_dataset$FKC...4 / baseline_index_FKC + 0.5 * steel_prices_dataset$TNM...6 / baseline_index_TNM)
+
+# Add the "Componenten" column with value "Staal"
+steel_prices_dataset$Componenten <- "Reinforcing steel"
+
+# Calculate the index values for "Construction steel" based on "RSR...3" with index 100 on 2018-01-01
+baseline_index_RSR <- steel_prices_dataset$RSR...3[steel_prices_dataset$Perioden == as.Date("2018-01-01")]
+construction_steel_dataset <- data.frame(
+  Perioden = steel_prices_dataset$Perioden,
+  Componenten = "Construction steel",
+  Index = 100 * steel_prices_dataset$RSR...3 / baseline_index_RSR
+)
+
+reinforced_bars_steel_dataset <- data.frame(
+  Perioden = steel_prices_dataset$Perioden,
+  Componenten = "Reinforcing steel bars",
+  Index =  100 * (0.7 * steel_prices_dataset$FKC...4 / baseline_index_FKC + 0.3 * steel_prices_dataset$TNM...6 / baseline_index_TNM)
+)
+
+reinforced_nets_steel_dataset <- data.frame(
+  Perioden = steel_prices_dataset$Perioden,
+  Componenten = "Reinforcing steel nets",
+  Index =  100 * (0.3 * steel_prices_dataset$FKC...4 / baseline_index_FKC + 0.7 * steel_prices_dataset$TNM...6 / baseline_index_TNM)
+)
+# Remove unnecessary columns from steel_prices_dataset before appending
+steel_prices_dataset <- steel_prices_dataset[c("Perioden", "Componenten", "Index")]
+
+# Append the construction steel dataframe to the existing steel prices dataframe
+steel_prices_dataset <- rbind(steel_prices_dataset, construction_steel_dataset, reinforced_bars_steel_dataset, reinforced_nets_steel_dataset)
+
+
+steel_prices_dataset <- steel_prices_dataset %>%
+  arrange(Perioden) %>%
+  mutate(Diff = Index - lag(Index))
+```
+#BDB_material_dataset
+```{r}
+grondstoffen <- read.csv("grondstoffen.csv", sep = ";")
+materialen <- read.csv("materialen.csv", sep = ";")
+
+# Combine dataframes
+BDB_update_dataset <- merge(grondstoffen, materialen, by = "datum", all = TRUE)
+rm(grondstoffen, materialen)
+
+# Replace commas with dots
+BDB_update_dataset[] <- lapply(BDB_update_dataset, function(x) gsub(",", ".", x))
+
+# Convert date variable to date type & sort dataframe based on dates
+BDB_update_dataset$datum <- as.Date(BDB_update_dataset$datum, format = "%d-%m-%Y")
+BDB_update_dataset <- BDB_update_dataset[order(BDB_update_dataset$datum), ]
+
+# Convert other variables to numerical
+BDB_update_dataset <- BDB_update_dataset %>% mutate(across(-datum, as.numeric))
+
+write.csv(BDB_update_dataset, file = "BDB_update_dataset.csv", row.names = FALSE)
+
+# Sum the numerical variables in a cumulative manner, ignoring NA's
+BDB_update_dataset <- BDB_update_dataset %>% mutate_if(is.numeric, ~cumsum(ifelse(is.na(.), 0, .)) + . * 0)
+
+# Center all numerical columns
+BDB_update_dataset[, -1] <- lapply(BDB_update_dataset[, -1], function(x) {
+  first_non_na <- x[which(!is.na(x))[1]]
+  x - first_non_na + 100
+})
+
+# transform from wide to long format
+# BDB_update_dataset <- melt(BDB_update_dataset, id.vars = "datum")
+# BDB_update_dataset$value <- as.numeric(BDB_update_dataset$value)
+```
+#CBS_fuel_dataset
+```{r}
+## Diesel costs CBS
+api_url <- "https://opendata.cbs.nl/ODataApi/odata/80416ned/TypedDataSet"
+api_response <- jsonlite::fromJSON(api_url)
+
+# Extract the dataframe from the response
+CBS_fuel_dataset <- as.data.frame(api_response$value)
+
+# Filter for first day of each month
+CBS_fuel_dataset <- CBS_fuel_dataset[grep("01$", CBS_fuel_dataset$Perioden), ]
+
+# Convert "Perioden" to Date format
+CBS_fuel_dataset$Perioden <- as.Date(CBS_fuel_dataset$Perioden, format = "%Y%m%d")
+
+# Set baseline index value for January 1, 2018
+baseline_index <- CBS_fuel_dataset$Diesel_2[CBS_fuel_dataset$Perioden == as.Date("2018-01-01")]
+
+# Calculate the relative change in index values
+CBS_fuel_dataset$Index <- 100 * CBS_fuel_dataset$Diesel_2 / baseline_index
+
+# Add the "Componenten" column with value "fuel"
+CBS_fuel_dataset$Componenten <- "Diesel"
+
+# Filter for dates after 2018-01-01
+CBS_fuel_dataset <- CBS_fuel_dataset[CBS_fuel_dataset$Perioden >= as.Date("2018-01-01"), ]
+
+# Keep only the columns "Perioden", "Componenten", and "Index"
+CBS_fuel_dataset <- CBS_fuel_dataset[c("Perioden", "Componenten", "Index")]
+
+CBS_fuel_dataset <- CBS_fuel_dataset %>%
+  arrange(Perioden) %>%
+  mutate(Diff = Index - lag(Index))
+```
+
+
+
+# UK concrete prices
+```{r}
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/497162/15-313n_-_Construction_Building_Materials_-_Excel_Tables_January_2016.xlsm"
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2015 <- read_excel(filename, sheet = "Table 2")
+
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/713384/18-cs6_-_Construction_Building_Materials_-_Excel_Tables_May_2018.xlsm"
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2018 <- read_excel(filename, sheet = "Table 2")
+
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/806103/19-cs6_-_Construction_Building_Materials_-_Excel_Tables_May_2019.xlsx"
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2019 <- read_excel(filename, sheet = "Table 2")
+
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/888940/20-cs6_-_Construction_Building_Materials_-_Tables_May_2020.xlsm"
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2020 <- read_excel(filename, sheet = "Table 2")
+
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/990220/21-cs6_-_Construction_Building_Materials_-_Tables_May_2021.xlsm"
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2021 <- read_excel(filename, sheet = "Table 2")
+
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/1079449/22-cs6_-_Construction_Building_Materials_-_Tables_May_2022.xlsm"
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2022 <- read_excel(filename, sheet = "Table 2")
+
+
+xlsx_url <- "https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/1160690/23-cs6-_Construction_Building_Materials_-_Tables_May_2023.xlsx "
+filename <- "file.xlsx"
+download.file(xlsx_url, destfile = filename, mode = "wb")
+
+UK_concrete_2023 <- read_excel(filename, sheet = "Table 2")
+
+# List of dataframe names
+df_names <- c("UK_concrete_2015","UK_concrete_2018","UK_concrete_2019","UK_concrete_2020", "UK_concrete_2021", "UK_concrete_2022", "UK_concrete_2023")
+
+# Loop through each dataframe
+for (df_name in df_names) {
+  # Get the dataframe by name
+  df <- get(df_name)
+  
+  # Set row 6 as column names
+  colnames(df) <- df[6, ]
+  
+  # Remove the last column of the dataframe
+  df <- df[, -ncol(df)]
+  
+  # Remove columns with only NA values
+  df <- df[, colSums(!is.na(df)) > 0]
+  
+  # Rename the first column as 'element'
+  colnames(df)[1] <- "element"
+  
+  # Remove columns without column names
+  df <- df[, !is.na(colnames(df))]
+  
+  # Assign the updated dataframe back to the environment
+  assign(df_name, df)
+}
+
+
+# Loop through each dataframe
+for (df_name in df_names) {
+  # Get the dataframe by name
+  df <- get(df_name)
+
+  # Subset the dataframe to rows that contain the specified values in the first column
+  df <- df[df$element %in% c('Ready-mixed concrete **', 'Concrete reinforcing bars (steel)','Pre-cast concrete products','Concrete reinforcing bars'), ]
+
+  # Assign the subsetted dataframe back to the original dataframe name
+  assign(df_name, df)
+}
+
+for (name in df_names) {
+  df <- get(name)
+  df[, -1] <- sapply(df[, -1], as.numeric)
+  assign(name, df)
+}
+
+UK_concrete_2015_copy <- UK_concrete_2015
+UK_concrete_2018_copy <- UK_concrete_2018
+UK_concrete_2019_copy <- UK_concrete_2019
+UK_concrete_2020_copy <- UK_concrete_2020
+UK_concrete_2021_copy <- UK_concrete_2021
+UK_concrete_2022_copy <- UK_concrete_2022
+UK_concrete_2023_copy <- UK_concrete_2023
+
+```
+
+```{r}
+# to reload the df's without running the url's
+# UK_concrete_2015 <- UK_concrete_2015_copy
+# UK_concrete_2018 <- UK_concrete_2018_copy
+# UK_concrete_2019 <- UK_concrete_2019_copy
+# UK_concrete_2020 <- UK_concrete_2020_copy
+# UK_concrete_2021 <- UK_concrete_2021_copy
+# UK_concrete_2022 <- UK_concrete_2022_copy
+# UK_concrete_2023 <- UK_concrete_2023_copy
+
+UK_concrete_2015 <- UK_concrete_2015[, -(1:2)]
+
+UK_concrete_2015 <- UK_concrete_2015[, c((5:ncol(UK_concrete_2015)), 1:4)]
+
+UK_concrete_2015 <- cbind(UK_concrete_2015$Apr, UK_concrete_2015)
+
+# UK_concrete_2015 <- sapply(UK_concrete_2015, as.numeric)
+
+cat(UK_concrete_2015$Jan)
+
+UK_concrete_2018[2:14] <- UK_concrete_2018[2:14] / UK_concrete_2015$Jan * 100
+UK_concrete_2019[2:14] <- UK_concrete_2019[2:14] / UK_concrete_2015$Jan * 100
+UK_concrete_2020[2:14] <- UK_concrete_2020[2:14] / UK_concrete_2015$Jan * 100
+
+```
+
+
+```{r}
+# UK_2015_cols <- seq(as.Date("2014-04-01"), as.Date("2015-04-01"), by = "month")
+# UK_2015_cols <- format(UK_2015_cols, "%b %Y")
+
+UK_2018_cols <- seq(as.Date("2017-04-01"), as.Date("2018-04-01"), by = "month")
+UK_2018_cols <- format(UK_2018_cols, "%b %Y")
+
+UK_2019_cols <- seq(as.Date("2018-04-01"), as.Date("2019-04-01"), by = "month")
+UK_2019_cols <- format(UK_2019_cols, "%b %Y")
+
+# Generate a list of dates from Apr 2019 till Apr 2020
+UK_2020_cols <- seq(as.Date("2019-04-01"), as.Date("2020-04-01"), by = "month")
+UK_2020_cols <- format(UK_2020_cols, "%b %Y")
+
+# Generate a list of dates from Apr 2020 till Apr 2021
+UK_2021_cols <- seq(as.Date("2020-04-01"), as.Date("2021-04-01"), by = "month")
+UK_2021_cols <- format(UK_2021_cols, "%b %Y")
+
+# Generate a list of dates from Apr 2021 till Apr 2022
+UK_2022_cols <- seq(as.Date("2021-04-01"), as.Date("2022-04-01"), by = "month")
+UK_2022_cols <- format(UK_2022_cols, "%b %Y")
+
+# Generate a list of dates from Apr 2022 till Apr 2023
+UK_2023_cols <- seq(as.Date("2022-04-01"), as.Date("2023-04-01"), by = "month")
+UK_2023_cols <- format(UK_2023_cols, "%b %Y")
+
+df_names <- c("UK_concrete_2018","UK_concrete_2019","UK_concrete_2020", "UK_concrete_2021", "UK_concrete_2022", "UK_concrete_2023")
+
+# Loop through each dataframe
+for (i in 1:length(df_names)) {
+  
+  # Get the dataframe by name
+  df <- get(df_names[i])
+  
+  # Replace the column names with the corresponding list of dates
+  if (i == 1) {
+    colnames(df)[2:length(df)] <- UK_2018_cols
+  } else if (i == 2) {
+    colnames(df)[2:length(df)] <- UK_2019_cols
+  } else if (i == 3) {
+    colnames(df)[2:length(df)] <- UK_2020_cols
+  } else if (i == 4) {
+    colnames(df)[2:length(df)] <- UK_2021_cols
+  } else if (i == 5) {
+    colnames(df)[2:length(df)] <- UK_2022_cols
+  } else if (i == 6) {
+    colnames(df)[2:length(df)] <- UK_2023_cols
+  }
+
+  # Assign the updated dataframe back to the environment
+  assign(df_names[i], df)
+}
+```
+
+
+```{r}
+# Remove the first two columns from the 2nd, 3rd, and 4th dataframes
+UK_concrete_2019 <- UK_concrete_2019[, -(1:2)]
+UK_concrete_2020 <- UK_concrete_2020[, -(1:2)]
+UK_concrete_2021 <- UK_concrete_2021[, -(1:2)]
+UK_concrete_2022 <- UK_concrete_2022[, -(1:2)]
+UK_concrete_2023 <- UK_concrete_2023[, -(1:2)]
+
+# Merge the dataframes horizontally
+UK_concrete_dataset <- cbind(UK_concrete_2018,UK_concrete_2019,UK_concrete_2020, UK_concrete_2021, UK_concrete_2022, UK_concrete_2023)
+
+UK_concrete_dataset_copy <- UK_concrete_dataset
+# UK_concrete_dataset <- UK_concrete_dataset_copy
+
+# rm(UK_concrete_2015, UK_concrete_2018,UK_concrete_2019,UK_concrete_2020, UK_concrete_2021, UK_concrete_2022, UK_concrete_2023, df_names)
+
+# UK_concrete_dataset <- UK_concrete_dataset %>%
+#   pivot_longer(cols = -element, names_to = "Perioden", values_to = "Index")
+
+# UK_concrete_dataset <- melt(UK_concrete_dataset, id.vars = "datum")
+
+UK_concrete_dataset <- melt(UK_concrete_dataset, id.vars = "element", variable.name = "Perioden", value.name = "Index")
+
+UK_concrete_dataset$Perioden <- parse_date_time(UK_concrete_dataset$Perioden , orders = c("%b %Y"))
+UK_concrete_dataset$Perioden  <- format(UK_concrete_dataset$Perioden , "%Y-%m-%d")
+UK_concrete_dataset$Perioden  <- as.Date(UK_concrete_dataset$Perioden)
+
+UK_concrete_dataset$Index <- as.numeric(UK_concrete_dataset$Index)
+
+UK_concrete_dataset <- UK_concrete_dataset %>% rename(Componenten = element)
+
+UK_concrete_dataset <- UK_concrete_dataset %>% filter(Perioden >= as.Date("2018-01-01"))
+ 
+baseline_index <- UK_concrete_dataset$Index[UK_concrete_dataset$Perioden == as.Date("2018-01-01")]
+UK_concrete_dataset$Index <- 100 * UK_concrete_dataset$Index / baseline_index
+
+UK_concrete_dataset <- UK_concrete_dataset %>%
+  group_by(Componenten) %>%
+  arrange(Perioden) %>%
+  mutate(Diff = Index - lag(Index))
+
+# Remove the grouping
+UK_concrete_dataset <- ungroup(UK_concrete_dataset)
+
+write.csv(UK_concrete_dataset, "UK_concrete_dataset.csv", row.names=FALSE)
+```
+
+#Merged
+```{r}
+CBS_fuel_dataset$Bron <- "CBS_fuel_dataset"
+steel_prices_dataset$Bron <- "steel_prices_dataset"
+CBS_energy_dataset$Bron <- "CBS_energy_dataset"
+CBS_material_labour_dataset$Bron <- "CBS_material_labour_dataset"
+poured_concrete_dataset$Bron <- "poured_concrete_dataset"
+UK_concrete_dataset$Bron <- "UK_concrete_dataset"
+
+data_frames <- list(CBS_fuel_dataset, steel_prices_dataset, CBS_energy_dataset, CBS_material_labour_dataset, poured_concrete_dataset, UK_concrete_dataset)
+
+merged_dataset <- Reduce(function(df1, df2) {
+  merge(df1, df2[, !colnames(df2) %in% "Prijs"], by = c("Perioden", "Componenten", "Index", "Bron","Diff"), all = TRUE)
+}, data_frames)
+
+# Generate a complete series of months
+all_dates <- seq(from = min(merged_dataset$Perioden), to = max(merged_dataset$Perioden), by = "month")
+
+# Create a new data frame where every component is associated with every date
+all_combinations <- expand.grid(Perioden = all_dates, Componenten = unique(merged_dataset$Componenten))
+
+colnames(merged_dataset)[colnames(merged_dataset) == "Diff"] <- "Development"
+
+
+# Convert the 'date_column' to Date format if it's not already in Date format
+merged_dataset$dutch_date <- format(merged_dataset$Perioden, locale = "dutch")
+
+# Selecting desired columns
+merged_dataset <- merged_dataset[, c("Perioden", "Index", "Componenten")]
+# Filter rows with "Perioden" earlier or equal to 1-6-2023
+merged_dataset <- merged_dataset[merged_dataset$Perioden <= as.Date("2023-05-01"), ]
+
+write.csv(merged_dataset, "merged_dataset.csv", row.names=FALSE)
+```
+
+```{r}
+#data_frames <- list(CBS_benzine_dataset, steel_prices_dataset, CBS_energy_dataset, CBS_material_labour_dataset, poured_concrete_dataset)
+
+#merged_dataset <- Reduce(function(df1, df2) {
+#  merge(df1, df2[, !colnames(df2) %in% "Prijs"], by = c("Perioden", "Componenten", "Index", "Bron","Diff"), all = TRUE)
+#}, data_frames)
+
+# Generate a complete series of months
+#all_dates <- seq(from = min(merged_dataset$Perioden), to = max(merged_dataset$Perioden), by = "month")
+
+# Create a new data frame where every component is associated with every date
+#all_combinations <- expand.grid(Perioden = all_dates, Componenten = unique(merged_dataset$Componenten))
+
+#colnames(merged_dataset)[colnames(merged_dataset) == "Diff"] <- "Development"
+
+#write.csv(merged_dataset, "merged_dataset.csv", row.names=FALSE)
+```
+
+#Graphs
+##Graph BDB updates
+```{r, echo=FALSE, results='hide', fig.keep='all'}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+ 
+BDB_update_dataset_plot <- ggplot(BDB_update_dataset, aes(x = datum)) +
+  geom_line(aes(y = staal, color = "staal"), size = 1) +
+  geom_line(aes(y = staalproducten, color = "staalproducten"), size = 1) +
+  geom_line(aes(y = prefab.beton, color = "prefab.beton"), size = 1) +
+  labs(color = "BDB maandelijkse fluctuaties") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_color_manual(values = c("staal" = "red", "staalproducten" = "blue", "prefab.beton" = "green"))
+
+BDB_update_dataset_plot
+```
+
+##Graph CBS Bouwkosten
+```{r}
+CBS_material_labour_plot <- ggplot(data = CBS_material_labour_dataset, aes(x = Perioden, y=Index, col=Componenten, group=Componenten)) + 
+  # geom_smooth(se = T) +
+  geom_line() +
+  labs(color = "Nieuwbouw bouwkosten per jaar, 2018 baseline") +
+  # coord_cartesian(ylim = c(-3, 15), expand = FALSE) +
+  # scale_y_continuous(breaks = seq(-3, 15, by=3)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  geom_vline(xintercept = as.Date("2015-06-01"), linetype = "dashed", color = "black")
+
+CBS_material_labour_plot
+```
+#Merged plot
+```{r}
+merged_dataset_plot <- ggplot(data = merged_dataset, aes(x = Perioden, y=Index, col=Componenten, group=Componenten)) + 
+  geom_smooth(se = F, size=1) +
+  # geom_line() +
+  # labs(color = "Merged plot") +
+  # coord_cartesian(ylim = c(-3, 15), expand = FALSE) +
+  # scale_y_continuous(breaks = seq(-3, 15, by=3)) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_color_brewer(palette="Set3")
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") 
+  # geom_vline(xintercept = as.Date("2018-01-01"), color = "black")
+
+merged_dataset_plot
+```
+
+```{r}
+
+CBS_cost_plot <- ggplot(data = CBS_material_labour_dataset, aes(x = Perioden, y=Index, fill=Componenten)) +
+  # geom_bar(position="fill", stat="identity") +
+  geom_area() +
+  theme_classic() +
+  scale_fill_manual(values = wes_palette("IsleofDogs1")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+
+CBS_cost_plot
+
+```
+
+```{r}
+
+cost_prop_bar <- ggplot(cost_proportions_dataset, aes(x = "", y = Percentage, fill = Column, label = paste0(round(Percentage), "%"))) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_fill_manual(values = wes_palette("IsleofDogs1")) +
+  geom_text(size = 3, position = position_stack(vjust = 0.5), colour="white")
+
+cost_prop_bar
+```
+
+```{r}
+# UK_concrete_dataset_plot <- ggplot(data = UK_concrete_dataset, aes(x = Perioden, y=Index, col=Componenten, group=Componenten)) + 
+#   # geom_smooth(se = T) +
+#   geom_line() +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+# 
+# UK_concrete_dataset_plot
+```
+
+#Analysis Material CBS VS BDB
+```{r}
+# Convert Perioden column to Date format
+CBS_material_labour_dataset$Perioden <- as.Date(CBS_material_labour_dataset$Perioden)
+BDB$Perioden <- as.Date(BDB$Perioden)
+
+# Subset the data from CBS_material_labour_dataset
+subset_cbs <- subset(CBS_material_labour_dataset, Componenten == "Materiaalcomponent")
+
+# Create the plot
+ggplot() +
+  # Plotting the subset of CBS_material_labour_dataset
+  geom_line(data = subset_cbs, aes(x = Perioden, y = Index, color = "CBS_material_labour_dataset"), size = 1) +
+  # Plotting the BDB dataset
+  geom_line(data = BDB, aes(x = Perioden, y = Total.material..index., color = "BDB"), size = 1) +
+  # X-axis label
+  xlab("Perioden") +
+  # Y-axis label
+  ylab("Index") +
+  # Title of the plot
+  ggtitle("Material Index Comparison") +
+  # Legend
+  scale_color_manual(values = c("blue", "red"),
+                     guide = guide_legend(title = "Data Source", nrow = 1, title.position = "top")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+```
+
+
+```{r}
+# Remove missing values from both vectors
+bdb_index <- na.omit(BDB$Total.material..index.)
+cbs_data <- subset(CBS_material_labour_dataset, Componenten == "Materiaalcomponent")
+cbs_index <- na.omit(cbs_data$Index)
+
+# Make sure the vectors have matching dimensions
+min_length <- min(length(bdb_index), length(cbs_index))
+bdb_index <- bdb_index[1:min_length]
+cbs_index <- cbs_index[1:min_length]
+
+# Calculate correlation coefficient
+correlation <- cor(bdb_index, cbs_index)
+
+# Create a scatter plot
+plot(bdb_index, cbs_index, xlab = "BDB Index", ylab = "CBS Index", main = "Index Comparison")
+
+# Add a trendline
+abline(lm(cbs_index ~ bdb_index), col = "red")
+
+# Display the correlation coefficient
+text(0.5, 0.1, paste("Correlation:", round(correlation, 3)), col = "blue")
+
+```
+```{r}
+# Calculate percentage changes
+bdb_pct_change <- (bdb_index - 100) / 100
+cbs_pct_change <- (cbs_index - 100) / 100
+
+# Calculate correlation coefficient based on percentage changes
+correlation <- cor(bdb_pct_change, cbs_pct_change)
+
+# Print the correlation coefficient
+cat("Correlation Coefficient:", round(correlation, 3), "\n")
+
+# Assess the strength of correlation
+if (abs(correlation) >= 0.7) {
+  strength <- "Strong"
+} else if (abs(correlation) >= 0.3) {
+  strength <- "Moderate"
+} else {
+  strength <- "Weak"
+}
+
+# Print the strength of correlation
+cat("Strength of Correlation:", strength, "\n")
+
+```
+```{r}
+# Calculate Mean Absolute Percentage Error (MAPE)
+mape <- mean(abs((bdb_index - cbs_index) / bdb_index) * 100)
+
+# Print the MAPE
+cat("Mean Absolute Percentage Error (MAPE):", round(mape, 3), "%\n")
+
+```
+
+```{r}
+# Convert Perioden column to Date format
+CBS_material_labour_dataset$Perioden <- as.Date(CBS_material_labour_dataset$Perioden)
+BDB$Perioden <- as.Date(BDB$Perioden)
+
+# Subset the data from CBS_material_labour_dataset
+subset_cbs <- subset(CBS_material_labour_dataset, Componenten == "Looncomponent")
+
+# Create the plot
+ggplot() +
+  # Plotting the subset of CBS_material_labour_dataset
+  geom_line(data = subset_cbs, aes(x = Perioden, y = Index, color = "CBS_material_labour_dataset"), size = 1) +
+  # Plotting the BDB dataset
+  geom_line(data = BDB, aes(x = Perioden, y = Total.labor..index., color = "BDB"), size = 1) +
+  # X-axis label
+  xlab("Perioden") +
+  # Y-axis label
+  ylab("Index") +
+  # Title of the plot
+  ggtitle("Labor Index Comparison") +
+  # Legend
+  scale_color_manual(values = c("blue", "red"),
+  guide = guide_legend(title = "Data Source", nrow = 1, title.position = "top")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+#Analysis labour CBS VS BDB
+```{r}
+# Remove missing values from both vectors
+bdb_index <- na.omit(BDB$Total.labor..index.)
+cbs_data <- subset(CBS_material_labour_dataset, Componenten == "Looncomponent")
+cbs_index <- na.omit(cbs_data$Index)
+
+# Make sure the vectors have matching dimensions
+min_length <- min(length(bdb_index), length(cbs_index))
+bdb_index <- bdb_index[1:min_length]
+cbs_index <- cbs_index[1:min_length]
+
+# Calculate correlation coefficient
+correlation <- cor(bdb_index, cbs_index)
+
+# Create a scatter plot
+plot(bdb_index, cbs_index, xlab = "BDB Index", ylab = "CBS Index", main = "Index Comparison")
+
+# Add a trendline
+abline(lm(cbs_index ~ bdb_index), col = "red")
+
+# Display the correlation coefficient
+text(0.5, 0.1, paste("Correlation:", round(correlation, 3)), col = "blue")
+
+```
+```{r}
+# Calculate percentage changes
+bdb_pct_change <- (bdb_index - 100) / 100
+cbs_pct_change <- (cbs_index - 100) / 100
+
+# Calculate correlation coefficient based on percentage changes
+correlation <- cor(bdb_pct_change, cbs_pct_change)
+
+# Print the correlation coefficient
+cat("Correlation Coefficient:", round(correlation, 3), "\n")
+
+# Assess the strength of correlation
+if (abs(correlation) >= 0.7) {
+  strength <- "Strong"
+} else if (abs(correlation) >= 0.3) {
+  strength <- "Moderate"
+} else {
+  strength <- "Weak"
+}
+
+# Print the strength of correlation
+cat("Strength of Correlation:", strength, "\n")
+
+```
+
+```{r}
+# Calculate Mean Absolute Percentage Error (MAPE)
+mape <- mean(abs((bdb_index - cbs_index) / bdb_index) * 100)
+
+# Print the MAPE
+cat("Mean Absolute Percentage Error (MAPE):", round(mape, 3), "%\n")
+```
+#Analyse Internal Concrete data vs UK concrete pre-cast concrete products
+```{r}
+# Convert Perioden column to Date format
+poured_concrete_dataset$Perioden <- as.Date(poured_concrete_dataset$Perioden)
+UK_concrete_dataset$Perioden <- as.Date(UK_concrete_dataset$Perioden)
+
+# Subset the data from UK_concrete_dataset
+subset_uk <- subset(UK_concrete_dataset, Componenten == "Pre-cast concrete products")
+# Create the plot
+ggplot() +
+  # Plotting the subset of UK_concrete_dataset
+  geom_line(data = subset_uk, aes(x = Perioden, y = Index, color = "UK_concrete_dataset"), size = 1) +
+  # Plotting the poured_concrete_dataset
+  geom_line(data = poured_concrete_dataset, aes(x = Perioden, y = Index, color = "poured_concrete_dataset"), size = 1) +
+  # X-axis label
+  xlab("Perioden") +
+  # Y-axis label
+  ylab("Index") +
+  # Title of the plot
+  ggtitle("Concrete Index Comparison") +
+  # Legend
+  scale_color_manual(values = c("blue", "red"),
+                     guide = guide_legend(title = "Data Source", nrow = 1, title.position = "top")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+```{r}
+# Remove missing values from both vectors
+poured_concrete_index <- na.omit(poured_concrete_dataset$Index)
+uk_data <- subset(UK_concrete_dataset, Componenten == "Pre-cast concrete products")
+uk_index <- na.omit(uk_data$Index)
+
+# Make sure the vectors have matching dimensions
+min_length <- min(length(poured_concrete_index), length(uk_index))
+poured_concrete_index <- poured_concrete_index[1:min_length]
+uk_index <- uk_index[1:min_length]
+
+# Calculate correlation coefficient
+correlation <- cor(poured_concrete_index, uk_index)
+
+# Create a scatter plot
+plot(poured_concrete_index, uk_index, xlab = "poured_concrete_dataset Index", ylab = "UK_concrete_dataset Index", main = "Index Comparison")
+
+# Add a trendline
+abline(lm(uk_index ~ poured_concrete_index), col = "red")
+
+# Display the correlation coefficient
+text(0.5, 0.1, paste("Correlation:", round(correlation, 3)), col = "blue")
+
+```
+```{r}
+# Calculate percentage changes
+poured_concrete_pct_change <- (poured_concrete_index - 100) / 100
+uk_pct_change <- (uk_index - 100) / 100
+
+# Calculate correlation coefficient based on percentage changes
+correlation <- cor(poured_concrete_pct_change, uk_pct_change)
+
+# Print the correlation coefficient
+cat("Correlation Coefficient:", round(correlation, 3), "\n")
+
+# Assess the strength of correlation
+if (abs(correlation) >= 0.7) {
+  strength <- "Strong"
+} else if (abs(correlation) >= 0.3) {
+  strength <- "Moderate"
+} else {
+  strength <- "Weak"
+}
+
+# Print the strength of correlation
+cat("Strength of Correlation:", strength, "\n")
+```
+```{r}
+# Calculate Mean Absolute Percentage Error (MAPE)
+mape <- mean(abs((poured_concrete_index - uk_index) / poured_concrete_index) * 100)
+
+# Print the MAPE
+cat("Mean Absolute Percentage Error (MAPE):", round(mape, 3), "%\n")
+
+```
+# Combining Pre-cast met ready-mixed
+```{r}
+# Subset the data for the "Pre-cast concrete products" and "Ready-mixed concrete **" components
+precast_data <- subset(UK_concrete_dataset, Componenten == "Pre-cast concrete products")
+readymix_data <- subset(UK_concrete_dataset, Componenten == "Ready-mixed concrete **")
+
+# Merge the two datasets based on the Perioden column
+merged_data <- merge(precast_data, readymix_data, by = "Perioden", suffixes = c("_precast", "_readymix"))
+
+# Calculate the pooled index as the average of the two indexes
+pooled_index <- (merged_data$Index_precast + merged_data$Index_readymix) / 2
+
+# Print the pooled index
+cat("Pooled Index:", pooled_index, "\n")
+
+
+```
+```{r}
+# Remove missing values from the poured_concrete_dataset and pooled_index vectors
+poured_concrete_index <- na.omit(poured_concrete_dataset$Index)
+pooled_index <- na.omit(pooled_index)
+
+# Make sure the vectors have matching dimensions
+min_length <- min(length(poured_concrete_index), length(pooled_index))
+poured_concrete_index <- poured_concrete_index[1:min_length]
+pooled_index <- pooled_index[1:min_length]
+
+# Calculate correlation coefficient
+correlation <- cor(poured_concrete_index, pooled_index)
+
+# Create a scatter plot
+plot(poured_concrete_index, pooled_index, xlab = "poured_concrete_dataset Index", ylab = "Pooled Index", main = "Index Comparison")
+
+# Add a trendline
+abline(lm(pooled_index ~ poured_concrete_index), col = "red")
+
+# Display the correlation coefficient
+text(0.5, 0.1, paste("Correlation:", round(correlation, 3)), col = "blue")
+
+# Calculate Mean Absolute Percentage Error (MAPE)
+mape <- mean(abs((poured_concrete_index - pooled_index) / poured_concrete_index) * 100)
+
+# Print the MAPE
+cat("Mean Absolute Percentage Error (MAPE):", round(mape, 3), "%\n")
+
+
+
+```
+```{r}
+library(ggplot2)
+
+# Create a data frame for visualization
+comparison_data <- data.frame(Perioden = poured_concrete_dataset$Perioden,
+                              Poured_Concrete_Index = poured_concrete_dataset$Index,
+                              Pooled_Index = pooled_index[1:length(poured_concrete_dataset$Index)])
+
+# Convert Perioden column to Date format
+comparison_data$Perioden <- as.Date(comparison_data$Perioden)
+
+# Create the plot
+ggplot(comparison_data, aes(x = Perioden)) +
+  geom_line(aes(y = Poured_Concrete_Index, color = "Poured Concrete Index"), size = 1) +
+  geom_line(aes(y = Pooled_Index, color = "Pooled Index"), size = 1) +
+  xlab("Perioden") +
+  ylab("Index") +
+  ggtitle("Poured Concrete Index vs. Pooled Index") +
+  scale_color_manual(values = c("blue", "red"),
+                     labels = c("Poured Concrete Index", "Pooled Index"),
+                     guide = guide_legend(title = "Data Source", nrow = 1, title.position = "top")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+```{r}
+# Convert Perioden column to Date format
+steel_prices_dataset$Perioden <- as.Date(steel_prices_dataset$Perioden)
+UK_concrete_dataset$Perioden <- as.Date(UK_concrete_dataset$Perioden)
+
+# Create the plot
+ggplot() +
+  # Plotting the steel_prices_dataset
+  geom_line(data = subset(steel_prices_dataset, Componenten == "Reinforcing steel"), aes(x = Perioden, y = Index, color = "steel_prices_dataset"), size = 1) +
+  # Plotting the UK_concrete_dataset
+  geom_line(data = subset(UK_concrete_dataset, Componenten == "Concrete reinforcing bars (steel)"), aes(x = Perioden, y = Index, color = "UK_concrete_dataset"), size = 1) +
+  # X-axis label
+  xlab("Perioden") +
+  # Y-axis label
+  ylab("Index") +
+  # Title of the plot
+  ggtitle("Steel and Concrete Index Comparison") +
+  # Legend
+  scale_color_manual(values = c("red", "blue"),
+                     labels = c("Steel Prices Dataset", "UK Concrete Dataset"),
+                     guide = guide_legend(title = "Data Source", nrow = 1, title.position = "top")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+```{r}
+# Convert Perioden column to Date format
+steel_prices_dataset$Perioden <- as.Date(steel_prices_dataset$Perioden)
+UK_concrete_dataset$Perioden <- as.Date(UK_concrete_dataset$Perioden)
+
+# Subset the data for "Reinforcing steel" in steel_prices_dataset
+steel_reinforcing <- subset(steel_prices_dataset, Componenten == "Reinforcing steel")
+
+# Subset the data for "Concrete reinforcing bars (steel)" in UK_concrete_dataset
+concrete_reinforcing <- subset(UK_concrete_dataset, Componenten == "Concrete reinforcing bars (steel)")
+
+# Merge the two subsets based on matching dates
+merged_data <- merge(steel_reinforcing, concrete_reinforcing, by = "Perioden", all = FALSE)
+
+# Calculate correlation coefficient
+correlation <- cor(merged_data$Index.x, merged_data$Index.y)
+
+# Print the correlation coefficient
+cat("Correlation Coefficient:", round(correlation, 3), "\n")
+
+# Calculate Mean Absolute Percentage Error (MAPE)
+mape <- mean(abs((merged_data$Index.x - merged_data$Index.y) / merged_data$Index.x) * 100)
+
+# Print the MAPE
+cat("Mean Absolute Percentage Error (MAPE):", round(mape, 3), "%\n")
+```
