@@ -38,7 +38,7 @@ choices_quotations <- data_choices$choices_quotations
 
 # Building UI
 ui <- dashboardPage(
-  dashboardHeader(title = "VORM 2050", titleWidth = 300),
+  dashboardHeader(title = "Company X", titleWidth = 300),
   
   dashboardSidebar(
     width = 300,
@@ -186,7 +186,7 @@ ui <- dashboardPage(
                                        "Fuel (CBS)" = 'Diesel',
                                        "Salary (CBS)" = 'Looncomponent',
                                        "Material (CBS)" = 'Materiaalcomponent',
-                                       "Concrete (VORM Bouw)" = 'Giet_beton',
+                                       "Concrete (Company B)" = 'Giet_beton',
                                        "Reinforcing Steel (Belmetal)" = 'Reinforcing steel',
                                        "Construction Steel (Belmetal)" = 'Construction steel'
                                      ), 
@@ -360,7 +360,7 @@ server <- function(input, output) {
       # scale_color_brewer(palette = "Set1") +
       scale_color_manual(values = c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"), 
                          labels = c("Equipment (CBS)" = "Bouwkosten totaal", "Energy: gas + electricity (CBS)" = "Energie", 
-                                    "Fuel (CBS)" = "Diesel", "Salary (CBS)" = "Looncomponent", "Material (CBS)" = "Materiaalcomponent", "Concrete (VORM Bouw)" = "Giet_beton", "Reinforcing Steel, (Belmetal)" = "Reinforcing steel", "Construction Steel (Belmetal)" = "Construction steel"),
+                                    "Fuel (CBS)" = "Diesel", "Salary (CBS)" = "Looncomponent", "Material (CBS)" = "Materiaalcomponent", "Concrete (Company B)" = "Giet_beton", "Reinforcing Steel, (Belmetal)" = "Reinforcing steel", "Construction Steel (Belmetal)" = "Construction steel"),
                          name = "Markets") +
       coord_cartesian(xlim = input$x_range_huidige) +
       theme_minimal() +
